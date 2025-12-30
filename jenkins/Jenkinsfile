@@ -70,14 +70,15 @@ spec:
                 container('aws-cli') {
                     echo 'Logging in to ECR...'
                     withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
-                        sh "aws ecr get-login-password --region ${AWS_REGION} > /tmp/ecr-password"
+                        sh "aws ecr get-login-password --region ${AWS_REGION} > ${WORKSPACE}/ecr-password"
                     }
                 }
                 container('docker') {
                     echo 'Pushing to ECR...'
-                    sh "cat /tmp/ecr-password | docker login --username AWS --password-stdin ${ECR_REGISTRY}"
+                    sh "cat ${WORKSPACE}/ecr-password | docker login --username AWS --password-stdin ${ECR_REGISTRY}"
                     sh "docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${APP_VERSION}"
                     sh "docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+                    sh "rm -f ${WORKSPACE}/ecr-password"
                 }
             }
         }
