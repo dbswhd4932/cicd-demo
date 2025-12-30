@@ -42,7 +42,7 @@ spec:
             steps {
                 script {
                     def version = sh(
-                        script: "grep 'APP_VERSION' app/main.py | cut -d'\"' -f2",
+                        script: "grep '^APP_VERSION' app/main.py | cut -d'\"' -f2",
                         returnStdout: true
                     ).trim()
                     env.APP_VERSION = version
