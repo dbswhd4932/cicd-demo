@@ -22,43 +22,16 @@ controller:
   admin:
     password: "admin123!"
 
-  # 플러그인 설치
+  # 플러그인 설치 (버전 지정 없이 최신 버전 자동 설치)
   installPlugins:
-    - kubernetes:4298.v3a_b_f82ae8c26
-    - workflow-aggregator:600.vb_57cdd26fdd7
-    - git:5.6.0
-    - configuration-as-code:1932.v75cb_b_f1b_698d
-    - pipeline-stage-view:2.34
-    - docker-workflow:580.vc0c340686b_54
-    - amazon-ecr:1.127.v17a_2606b_4cac
-    - aws-credentials:231.v08a_59f17d742
-    - blueocean:1.27.16
-
-  # JCasC (Jenkins Configuration as Code)
-  JCasC:
-    configScripts:
-      welcome-message: |
-        jenkins:
-          systemMessage: "CI/CD Demo Jenkins - Managed by Helm"
-
-# Agent 설정 (Kubernetes Pod로 실행)
-agent:
-  enabled: true
-  # Agent Pod에서 Docker 빌드를 위한 설정
-  podTemplates:
-    docker: |
-      - name: docker
-        label: docker
-        containers:
-          - name: docker
-            image: docker:24-dind
-            privileged: true
-            command: ["dockerd-entrypoint.sh"]
-            args: [""]
-          - name: aws-cli
-            image: amazon/aws-cli:latest
-            command: ["sleep"]
-            args: ["infinity"]
+    - kubernetes
+    - workflow-aggregator
+    - git
+    - pipeline-stage-view
+    - docker-workflow
+    - amazon-ecr
+    - aws-credentials
+    - pipeline-utility-steps
 
 # 영구 저장소 - EBS 사용
 persistence:
