@@ -33,72 +33,137 @@ spec:
     stages {
         stage('Checkout') {
             steps {
-                echo 'Checking out source code...'
-                checkout scm
-            }
-        }
-
-        stage('Get Version') {
-            steps {
                 script {
-                    def version = sh(
-                        script: "grep '^APP_VERSION' app/main.py | cut -d'\"' -f2",
-                        returnStdout: true
-                    ).trim()
-                    env.APP_VERSION = version
-                    env.ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-                    echo "Application Version: ${env.APP_VERSION}"
+                    try {
+                        echo 'Checking out source code...'
+                        checkout scm
+
+                        // Git commit hash를 버전으로 사용
+                        env.COMMIT_HASH = sh(returnStdout: true, script: 'git rev-parse HEAD | cut -c 1-7').trim()
+                        env.ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+                        echo "Commit Hash: ${env.COMMIT_HASH}"
+
+                        env.checkoutResult = 'true'
+                    } catch (error) {
+                        print(error)
+                        env.checkoutResult = 'false'
+                        currentBuild.result = 'FAILURE'
+                    }
                 }
             }
         }
 
         stage('Build Docker Image') {
+            when {
+                expression { return env.checkoutResult == 'true' }
+            }
             steps {
-                container('docker') {
-                    echo 'Building Docker image...'
-                    dir('app') {
-                        sh "docker build -t ${ECR_REPOSITORY}:${APP_VERSION} ."
-                        sh "docker tag ${ECR_REPOSITORY}:${APP_VERSION} ${ECR_REGISTRY}/${ECR_REPOSITORY}:${APP_VERSION}"
-                        sh "docker tag ${ECR_REPOSITORY}:${APP_VERSION} ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+                script {
+                    try {
+                        container('docker') {
+                            echo 'Building Docker image...'
+                            dir('app') {
+                                sh "docker build -t ${ECR_REPOSITORY}:${COMMIT_HASH} ."
+                                sh "docker tag ${ECR_REPOSITORY}:${COMMIT_HASH} ${ECR_REGISTRY}/${ECR_REPOSITORY}:${COMMIT_HASH}"
+                                sh "docker tag ${ECR_REPOSITORY}:${COMMIT_HASH} ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+                            }
+                        }
+                        env.dockerBuildResult = 'true'
+                    } catch (error) {
+                        print(error)
+                        echo 'Docker build failed'
+                        env.dockerBuildResult = 'false'
+                        currentBuild.result = 'FAILURE'
                     }
                 }
             }
         }
 
         stage('Push to ECR') {
+            when {
+                expression { return env.dockerBuildResult == 'true' }
+            }
             steps {
-                container('aws-cli') {
-                    echo 'Logging in to ECR...'
-                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
-                        sh "aws ecr get-login-password --region ${AWS_REGION} > ${WORKSPACE}/ecr-password"
+                script {
+                    try {
+                        container('aws-cli') {
+                            echo 'Logging in to ECR...'
+                            withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
+                                sh "aws ecr get-login-password --region ${AWS_REGION} > ${WORKSPACE}/ecr-password"
+                            }
+                        }
+                        container('docker') {
+                            echo 'Pushing to ECR...'
+                            sh "cat ${WORKSPACE}/ecr-password | docker login --username AWS --password-stdin ${ECR_REGISTRY}"
+                            sh "docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${COMMIT_HASH}"
+                            sh "docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+                            sh "rm -f ${WORKSPACE}/ecr-password"
+                        }
+                        env.pushResult = 'true'
+                    } catch (error) {
+                        print(error)
+                        echo 'ECR push failed'
+                        env.pushResult = 'false'
+                        currentBuild.result = 'FAILURE'
                     }
-                }
-                container('docker') {
-                    echo 'Pushing to ECR...'
-                    sh "cat ${WORKSPACE}/ecr-password | docker login --username AWS --password-stdin ${ECR_REGISTRY}"
-                    sh "docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${APP_VERSION}"
-                    sh "docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
-                    sh "rm -f ${WORKSPACE}/ecr-password"
                 }
             }
         }
 
         stage('Update K8s Manifest') {
+            when {
+                expression { return env.pushResult == 'true' }
+            }
             steps {
-                echo 'Updating Kubernetes manifest...'
-                withCredentials([gitUsernamePassword(credentialsId: 'codecommit-credentials', gitToolName: 'git-tool')]) {
-                    sh "rm -rf k8s-manifests"
-                    sh "git clone ${K8S_REPO_URL} k8s-manifests"
+                script {
+                    try {
+                        echo 'Updating Kubernetes manifest...'
+                        withCredentials([gitUsernamePassword(credentialsId: 'codecommit-credentials', gitToolName: 'git-tool')]) {
+                            sh "rm -rf k8s-manifests"
+                            sh "git clone ${K8S_REPO_URL} k8s-manifests"
 
-                    dir('k8s-manifests') {
-                        sh """
-                            sed -i 's|image:.*cicd-demo-app:.*|image: ${ECR_REGISTRY}/${ECR_REPOSITORY}:${APP_VERSION}|g' k8s/deployment.yaml
-                            git config user.email "jenkins@cicd-demo.com"
-                            git config user.name "Jenkins"
-                            git add .
-                            git commit -m "Update image to ${APP_VERSION}" || true
-                            git push origin main
-                        """
+                            dir('k8s-manifests') {
+                                sh """
+                                    sed -i 's|image:.*cicd-demo-app:.*|image: ${ECR_REGISTRY}/${ECR_REPOSITORY}:${COMMIT_HASH}|g' k8s/deployment.yaml
+                                    git config user.email "jenkins@cicd-demo.com"
+                                    git config user.name "Jenkins"
+                                    git add .
+                                    git commit -m "Deploy image ${COMMIT_HASH}" || true
+                                """
+                            }
+
+                            // GitOps 푸시 재시도 로직 (동시 배포 충돌 방지)
+                            def pushSuccess = false
+                            def retryCount = 0
+                            def maxRetries = 5
+
+                            while (!pushSuccess && retryCount < maxRetries) {
+                                try {
+                                    dir('k8s-manifests') {
+                                        sh """
+                                            git pull --rebase origin main || true
+                                            git push origin main
+                                        """
+                                    }
+                                    pushSuccess = true
+                                    echo "GitOps push succeeded on attempt ${retryCount + 1}"
+                                } catch (e) {
+                                    retryCount++
+                                    echo "GitOps push failed, retrying... (${retryCount}/${maxRetries})"
+                                    sleep(3)
+                                }
+                            }
+
+                            if (!pushSuccess) {
+                                error("GitOps push failed after ${maxRetries} attempts")
+                            }
+                        }
+                        env.gitopsResult = 'true'
+                    } catch (error) {
+                        print(error)
+                        echo 'GitOps update failed'
+                        env.gitopsResult = 'false'
+                        currentBuild.result = 'FAILURE'
                     }
                 }
             }
@@ -107,10 +172,16 @@ spec:
 
     post {
         success {
-            echo "Pipeline completed successfully! Version ${APP_VERSION} is ready for deployment"
+            echo "============================================"
+            echo "Pipeline completed successfully!"
+            echo "Image: ${ECR_REGISTRY}/${ECR_REPOSITORY}:${COMMIT_HASH}"
+            echo "============================================"
         }
         failure {
+            echo "============================================"
             echo "Pipeline failed!"
+            echo "Check the logs above for details."
+            echo "============================================"
         }
         always {
             echo "Cleaning up workspace..."
