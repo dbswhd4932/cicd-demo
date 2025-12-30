@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 # 애플리케이션 버전 - 이 값을 변경하여 배포 테스트
-APP_VERSION = "v0.0.2"
+APP_VERSION = "v0.0.3"
 
 app = FastAPI(
     title="CI/CD Demo API",
