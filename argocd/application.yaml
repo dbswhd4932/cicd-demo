@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cicd-demo
+  namespace: argocd
+spec:
+  project: default
+
+  # 소스 저장소 설정
+  source:
+    repoURL: https://git-codecommit.ap-northeast-2.amazonaws.com/v1/repos/cicd-demo-k8s
+    targetRevision: main
+    path: k8s
+
+  # 배포 대상 클러스터
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+
+  # 동기화 정책
+  syncPolicy:
+    automated:
+      prune: true      # 삭제된 리소스 자동 정리
+      selfHeal: true   # 수동 변경 시 자동 복구
+    syncOptions:
+      - CreateNamespace=true

@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cicd-demo
+  labels:
+    app: cicd-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cicd-demo
+  template:
+    metadata:
+      labels:
+        app: cicd-demo
+    spec:
+      containers:
+        - name: cicd-demo
+          # 이 이미지 태그는 Jenkins에서 자동으로 업데이트됩니다
+          image: ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/cicd-demo-app:v0.0.1
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10

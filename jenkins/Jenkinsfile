@@ -1,0 +1,121 @@
+pipeline {
+    agent {
+        kubernetes {
+            yaml '''
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: docker
+    image: docker:24-dind
+    securityContext:
+      privileged: true
+    env:
+    - name: DOCKER_TLS_CERTDIR
+      value: ""
+  - name: aws-cli
+    image: amazon/aws-cli:latest
+    command:
+    - sleep
+    args:
+    - infinity
+'''
+        }
+    }
+
+    environment {
+        AWS_REGION = 'ap-northeast-2'
+        AWS_ACCOUNT_ID = credentials('aws-account-id')
+        ECR_REPOSITORY = 'cicd-demo-app'
+        K8S_REPO_URL = "https://git-codecommit.${AWS_REGION}.amazonaws.com/v1/repos/cicd-demo-k8s"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                echo 'Checking out source code...'
+                checkout scm
+            }
+        }
+
+        stage('Get Version') {
+            steps {
+                script {
+                    def version = sh(
+                        script: "grep 'APP_VERSION' app/main.py | cut -d'\"' -f2",
+                        returnStdout: true
+                    ).trim()
+                    env.APP_VERSION = version
+                    env.ECR_REGISTRY = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+                    echo "Application Version: ${env.APP_VERSION}"
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                container('docker') {
+                    echo 'Building Docker image...'
+                    dir('app') {
+                        sh "docker build -t ${ECR_REPOSITORY}:${APP_VERSION} ."
+                        sh "docker tag ${ECR_REPOSITORY}:${APP_VERSION} ${ECR_REGISTRY}/${ECR_REPOSITORY}:${APP_VERSION}"
+                        sh "docker tag ${ECR_REPOSITORY}:${APP_VERSION} ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+                    }
+                }
+            }
+        }
+
+        stage('Push to ECR') {
+            steps {
+                container('aws-cli') {
+                    echo 'Logging in to ECR...'
+                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
+                        sh "aws ecr get-login-password --region ${AWS_REGION} > /tmp/ecr-password"
+                    }
+                }
+                container('docker') {
+                    echo 'Pushing to ECR...'
+                    sh "cat /tmp/ecr-password | docker login --username AWS --password-stdin ${ECR_REGISTRY}"
+                    sh "docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:${APP_VERSION}"
+                    sh "docker push ${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+                }
+            }
+        }
+
+        stage('Update K8s Manifest') {
+            steps {
+                echo 'Updating Kubernetes manifest...'
+                withCredentials([gitUsernamePassword(credentialsId: 'codecommit-credentials', gitToolName: 'git-tool')]) {
+                    sh "rm -rf k8s-manifests"
+                    sh "git clone ${K8S_REPO_URL} k8s-manifests"
+
+                    dir('k8s-manifests') {
+                        sh """
+                            sed -i 's|image:.*cicd-demo-app:.*|image: ${ECR_REGISTRY}/${ECR_REPOSITORY}:${APP_VERSION}|g' k8s/deployment.yaml
+                            git config user.email "jenkins@cicd-demo.com"
+                            git config user.name "Jenkins"
+                            git add .
+                            git commit -m "Update image to ${APP_VERSION}" || true
+                            git push origin main
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Pipeline completed successfully! Version ${APP_VERSION} is ready for deployment"
+        }
+        failure {
+            echo "Pipeline failed!"
+        }
+        always {
+            container('docker') {
+                sh "docker rmi ${ECR_REGISTRY}/${ECR_REPOSITORY}:${APP_VERSION} || true"
+            }
+            sh "rm -rf k8s-manifests"
+        }
+    }
+}
