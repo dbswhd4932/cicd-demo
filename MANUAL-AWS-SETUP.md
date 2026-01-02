@@ -81,7 +81,7 @@ flowchart TB
 2. **VPC 생성** 클릭
 3. **VPC 등** 선택 (VPC, 서브넷, 라우팅 테이블 자동 생성)
 4. 설정:
-   - 이름 태그 자동 생성: `cicd-demo`
+   - 이름 태그 자동 생성: `cicd-ui`
    - IPv4 CIDR 블록: `10.0.0.0/16`
    - IPv6 CIDR 블록: **없음**
    - 테넌시: **기본값**
@@ -115,7 +115,7 @@ flowchart TB
 4. **다음** 클릭
 5. 정책 확인: `AmazonEKSClusterPolicy` 자동 선택됨
 6. **다음** 클릭
-7. 역할 이름: `cicd-demo-eks-cluster-role`
+7. 역할 이름: `cicd-ui-eks-cluster-role`
 8. **역할 생성** 클릭
 
 ## 2-2. EKS 노드 그룹 역할
@@ -129,7 +129,7 @@ flowchart TB
    - ✅ `AmazonEKS_CNI_Policy`
    - ✅ `AmazonEC2ContainerRegistryReadOnly`
 6. **다음** 클릭
-7. 역할 이름: `cicd-demo-eks-node-role`
+7. 역할 이름: `cicd-ui-eks-node-role`
 8. **역할 생성** 클릭
 
 ---
@@ -156,13 +156,13 @@ flowchart TB
 4. 설정:
 
 ### 1단계: 클러스터 구성
-- 이름: `cicd-demo-eks`
+- 이름: `cicd-ui-eks`
 - Kubernetes 버전: `1.31` (또는 기본값)
-- 클러스터 서비스 역할: `cicd-demo-eks-cluster-role`
+- 클러스터 서비스 역할: `cicd-ui-eks-cluster-role`
 - **다음** 클릭
 
 ### 2단계: 네트워킹 지정
-- VPC: `cicd-demo-vpc` 선택
+- VPC: `cicd-ui-vpc` 선택
 - 서브넷: **4개 모두 선택** (퍼블릭 2개 + 프라이빗 2개)
 - 보안 그룹: 기본값 사용 (자동 생성)
 - 클러스터 엔드포인트 액세스: **퍼블릭 및 프라이빗**
@@ -191,8 +191,8 @@ flowchart TB
 2. **컴퓨팅** 탭 → **노드 그룹 추가** 클릭
 
 ### 1단계: 노드 그룹 구성
-- 이름: `cicd-demo-node-group`
-- 노드 IAM 역할: `cicd-demo-eks-node-role`
+- 이름: `cicd-ui-node-group`
+- 노드 IAM 역할: `cicd-ui-eks-node-role`
 - **다음** 클릭
 
 ### 2단계: 컴퓨팅 및 크기 조정 구성
@@ -208,8 +208,8 @@ flowchart TB
 
 ### 3단계: 네트워킹 지정
 - 서브넷: **프라이빗 서브넷 2개만 선택** ← 중요!
-  - `cicd-demo-subnet-private1-xxx`
-  - `cicd-demo-subnet-private2-xxx`
+  - `cicd-ui-subnet-private1-xxx`
+  - `cicd-ui-subnet-private2-xxx`
 - **다음** 클릭
 
 ### 4단계: 검토 및 생성
@@ -276,7 +276,7 @@ flowchart LR
 3. **리포지토리 생성** 클릭
 4. 설정:
    - 표시 여부: **프라이빗**
-   - 리포지토리 이름: `cicd-demo-app`
+   - 리포지토리 이름: `cicd-ui-app`
    - 태그 변경 가능성: **Mutable**
    - 푸시할 때 스캔: ✅ 활성화
 5. **리포지토리 생성** 클릭
@@ -285,12 +285,40 @@ flowchart LR
 
 # 6️⃣ CodeCommit 저장소 생성
 
+## 왜 저장소가 2개 필요한가?
+
+GitOps 방식의 CI/CD 파이프라인을 위해 **코드 저장소**와 **배포 설정 저장소**를 분리합니다.
+
+```
+저장소 1 (cicd-ui-app)        저장소 2 (cicd-ui-k8s)
+├── src/                      ├── deployment.yaml
+├── Dockerfile                ├── service.yaml
+├── package.json              └── ingress.yaml
+└── Jenkinsfile
+        │                             │
+        ▼                             ▼
+     Jenkins                       ArgoCD
+   (CI - 빌드)                  (CD - 배포)
+```
+
+| 저장소 | 용도 | 담당 도구 |
+|--------|------|----------|
+| **cicd-ui-app** | 애플리케이션 소스 코드, Dockerfile | Jenkins (빌드) |
+| **cicd-ui-k8s** | K8s 배포 매니페스트 (YAML) | ArgoCD (배포) |
+
+### 분리하는 이유
+
+- **관심사 분리**: 애플리케이션 코드 vs 인프라 설정
+- **권한 분리**: 개발자는 app만, 운영팀은 k8s 접근
+- **GitOps**: ArgoCD가 k8s 저장소만 모니터링
+- **롤백 용이**: 배포 설정만 별도 롤백 가능
+
 ## 저장소 1: 애플리케이션 코드
 
 1. AWS 콘솔 → **CodeCommit** 검색 → 클릭
 2. **리포지토리 생성** 클릭
 3. 설정:
-   - 리포지토리 이름: `cicd-demo-app`
+   - 리포지토리 이름: `cicd-ui-app`
    - 설명: `CI/CD Demo Application`
 4. **생성** 클릭
 
@@ -298,7 +326,7 @@ flowchart LR
 
 1. **리포지토리 생성** 클릭
 2. 설정:
-   - 리포지토리 이름: `cicd-demo-k8s`
+   - 리포지토리 이름: `cicd-ui-k8s`
    - 설명: `Kubernetes manifests for GitOps`
 3. **생성** 클릭
 
@@ -331,7 +359,7 @@ aws configure
 ## 7-2. EKS 클러스터 연결
 
 ```bash
-aws eks update-kubeconfig --region ap-northeast-2 --name cicd-demo-eks
+aws eks update-kubeconfig --region ap-northeast-2 --name cicd-ui-eks
 ```
 
 ## 7-3. 연결 확인
@@ -375,7 +403,7 @@ cd ~/Library/Mobile\ Documents/com~apple~CloudDocs/cicd
 git remote remove origin 2>/dev/null
 
 # 새 remote 추가
-git remote add origin https://git-codecommit.ap-northeast-2.amazonaws.com/v1/repos/cicd-demo-app
+git remote add origin https://git-codecommit.ap-northeast-2.amazonaws.com/v1/repos/cicd-ui-app
 
 # Push
 git push -u origin main

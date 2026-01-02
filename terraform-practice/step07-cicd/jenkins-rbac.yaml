@@ -1,0 +1,91 @@
+# ============================================
+# Jenkins RBAC (Kubernetes 권한)
+# ============================================
+# Jenkins가 EKS 클러스터 내에서 리소스를 관리할 수 있도록 권한 부여
+#
+# 사용법: kubectl apply -f jenkins-rbac.yaml
+
+---
+# ClusterRole: 클러스터 전체 권한
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: jenkins-cluster-role
+rules:
+  # Pod 관리 (Agent Pod 생성/삭제)
+  - apiGroups: [""]
+    resources: ["pods", "pods/exec", "pods/log"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch"]
+
+  # Secret 읽기 (Credentials)
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+
+  # ConfigMap 관리
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+
+  # Service 관리
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+
+  # Deployment 관리 (앱 배포용)
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets"]
+    verbs: ["get", "list", "watch", "create", "update", "delete", "patch"]
+
+  # Ingress 관리
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+
+  # PersistentVolumeClaim
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+
+---
+# ClusterRoleBinding: ServiceAccount에 역할 연결
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: jenkins-cluster-role-binding
+subjects:
+  - kind: ServiceAccount
+    name: jenkins
+    namespace: jenkins
+roleRef:
+  kind: ClusterRole
+  name: jenkins-cluster-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Role: jenkins 네임스페이스 내 추가 권한
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jenkins-namespace-role
+  namespace: jenkins
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/exec", "pods/log", "secrets", "configmaps"]
+    verbs: ["*"]
+
+---
+# RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-namespace-role-binding
+  namespace: jenkins
+subjects:
+  - kind: ServiceAccount
+    name: jenkins
+    namespace: jenkins
+roleRef:
+  kind: Role
+  name: jenkins-namespace-role
+  apiGroup: rbac.authorization.k8s.io

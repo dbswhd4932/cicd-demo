@@ -33,9 +33,29 @@ resource "aws_eks_cluster" "main" {
     endpoint_public_access  = true
   }
 
-  depends_on = [
-    aws_iam_role_policy_attachment.eks_cluster_policy
+  # 프로덕션용 클러스터 로깅 활성화
+  enabled_cluster_log_types = [
+    "api",
+    "audit",
+    "authenticator",
+    "controllerManager",
+    "scheduler"
   ]
+
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_cluster_policy,
+    aws_cloudwatch_log_group.eks
+  ]
+}
+
+# EKS 클러스터 로그 그룹
+resource "aws_cloudwatch_log_group" "eks" {
+  name              = "/aws/eks/${var.project_name}-eks/cluster"
+  retention_in_days = 30
+
+  tags = {
+    Name = "${var.project_name}-eks-logs"
+  }
 }
 
 # EKS 노드 그룹 IAM Role

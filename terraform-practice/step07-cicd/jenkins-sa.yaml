@@ -1,0 +1,20 @@
+# ============================================
+# Jenkins ServiceAccount (IRSA 연동용)
+# ============================================
+# ECR, EKS 접근 권한을 위한 ServiceAccount
+#
+# 사용법:
+# 1. 먼저 IAM Role 생성 (README 참고)
+# 2. kubectl apply -f jenkins-sa.yaml
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jenkins
+  namespace: jenkins
+  annotations:
+    # IRSA: IAM Role과 연결
+    eks.amazonaws.com/role-arn: arn:aws:iam::421114334882:role/yoon-jenkins-irsa-role
+  labels:
+    app.kubernetes.io/name: jenkins
+    app.kubernetes.io/component: controller

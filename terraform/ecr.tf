@@ -1,10 +1,15 @@
 # ECR 레포지토리
 resource "aws_ecr_repository" "app" {
   name                 = "${var.project_name}-app"
-  image_tag_mutability = "MUTABLE"
+  image_tag_mutability = "IMMUTABLE" # 프로덕션: 이미지 태그 덮어쓰기 방지
 
   image_scanning_configuration {
     scan_on_push = true
+  }
+
+  # 이미지 암호화 (KMS 사용)
+  encryption_configuration {
+    encryption_type = "AES256"
   }
 
   tags = {

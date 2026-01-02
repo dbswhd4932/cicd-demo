@@ -1,0 +1,65 @@
+# ============================================
+# Jenkins Helm Values
+# ============================================
+# 설치: helm install jenkins jenkins/jenkins -n jenkins -f jenkins-values.yaml
+
+controller:
+  # Jenkins 컨트롤러 이미지 설정 (최신 Helm 차트 형식)
+  image:
+    registry: docker.io
+    repository: jenkins/jenkins
+    tag: "lts-jdk17"
+    pullPolicy: Always
+
+  # 리소스 설정
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2000m"
+      memory: "2Gi"
+
+  # 서비스 타입 (LoadBalancer로 외부 노출)
+  serviceType: LoadBalancer
+  servicePort: 8080
+
+  # 관리자 계정
+  admin:
+    username: "admin"
+    # password: "설치 후 자동 생성된 비밀번호 사용"
+
+  # 기본 플러그인
+  installPlugins:
+    - kubernetes:latest
+    - workflow-aggregator:latest
+    - git:latest
+    - docker-workflow:latest
+    - configuration-as-code:latest
+    - aws-credentials:latest
+
+  # JCasC (Jenkins Configuration as Code)
+  JCasC:
+    configScripts:
+      welcome-message: |
+        jenkins:
+          systemMessage: "Jenkins on EKS - Yoon Project"
+
+# Agent 설정 (동적 Pod 생성)
+agent:
+  enabled: true
+
+# 영구 저장소 (EBS CSI Driver 필요)
+# EBS CSI Driver 설치: eksctl create addon --name aws-ebs-csi-driver --cluster yoon-eks --region ap-northeast-2
+persistence:
+  enabled: false  # 테스트용: CSI Driver 없이 진행, 운영 시 true로 변경
+
+# ServiceAccount (IRSA 연결은 별도 jenkins-sa.yaml 사용)
+serviceAccount:
+  create: false
+  name: jenkins
+
+# RBAC
+rbac:
+  create: true
+  readSecrets: true

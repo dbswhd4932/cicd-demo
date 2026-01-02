@@ -1,0 +1,174 @@
+// ============================================
+// Jenkins Pipeline (EKS 내 Jenkins + CodeCommit)
+// ============================================
+// Kubernetes Agent Pod에서 빌드 실행
+// 이 파일을 CodeCommit 저장소 루트에 위치시키세요
+
+pipeline {
+    // Kubernetes Agent Pod 사용 (동적 생성)
+    agent {
+        kubernetes {
+            yaml '''
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    jenkins: agent
+spec:
+  serviceAccountName: jenkins
+  containers:
+    # Docker 빌드용 컨테이너 (DinD)
+    - name: docker
+      image: docker:24-dind
+      securityContext:
+        privileged: true
+      env:
+        - name: DOCKER_TLS_CERTDIR
+          value: ""
+      volumeMounts:
+        - name: docker-storage
+          mountPath: /var/lib/docker
+
+    # AWS CLI + kubectl 컨테이너
+    - name: aws-kubectl
+      image: amazon/aws-cli:latest
+      command: ["sleep"]
+      args: ["infinity"]
+
+  volumes:
+    - name: docker-storage
+      emptyDir: {}
+'''
+        }
+    }
+
+    environment {
+        AWS_REGION     = 'ap-northeast-2'
+        ECR_REPOSITORY = 'yoon-app'
+        EKS_CLUSTER    = 'yoon-eks'
+        IMAGE_TAG      = "${BUILD_NUMBER}"
+    }
+
+    stages {
+        // ============================================
+        // 1단계: 소스 코드 체크아웃
+        // ============================================
+        stage('Checkout') {
+            steps {
+                checkout scm
+                echo "✅ 소스 코드 체크아웃 완료"
+                sh "ls -la"
+            }
+        }
+
+        // ============================================
+        // 2단계: Docker 이미지 빌드
+        // ============================================
+        stage('Build') {
+            steps {
+                container('docker') {
+                    script {
+                        echo "🔨 Docker 이미지 빌드 시작..."
+                        sh "docker build -t ${ECR_REPOSITORY}:${IMAGE_TAG} ."
+                        echo "✅ Docker 이미지 빌드 완료"
+                    }
+                }
+            }
+        }
+
+        // ============================================
+        // 3단계: ECR Push
+        // ============================================
+        stage('Push to ECR') {
+            steps {
+                container('docker') {
+                    script {
+                        echo "📤 ECR에 이미지 Push..."
+
+                        // apk로 aws-cli 설치 (docker 이미지에는 없음)
+                        sh "apk add --no-cache aws-cli"
+
+                        // AWS 계정 ID 가져오기
+                        def awsAccountId = sh(
+                            script: "aws sts get-caller-identity --query Account --output text",
+                            returnStdout: true
+                        ).trim()
+
+                        def ecrRegistry = "${awsAccountId}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+                        // ECR 로그인
+                        sh """
+                            aws ecr get-login-password --region ${AWS_REGION} | \
+                            docker login --username AWS --password-stdin ${ecrRegistry}
+                        """
+
+                        // 태깅 및 Push
+                        sh """
+                            docker tag ${ECR_REPOSITORY}:${IMAGE_TAG} ${ecrRegistry}/${ECR_REPOSITORY}:${IMAGE_TAG}
+                            docker tag ${ECR_REPOSITORY}:${IMAGE_TAG} ${ecrRegistry}/${ECR_REPOSITORY}:latest
+                            docker push ${ecrRegistry}/${ECR_REPOSITORY}:${IMAGE_TAG}
+                            docker push ${ecrRegistry}/${ECR_REPOSITORY}:latest
+                        """
+
+                        // 다음 Stage에서 사용할 환경변수 저장
+                        env.ECR_REGISTRY = ecrRegistry
+
+                        echo "✅ ECR Push 완료: ${ecrRegistry}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+                    }
+                }
+            }
+        }
+
+        // ============================================
+        // 4단계: EKS 배포
+        // ============================================
+        stage('Deploy to EKS') {
+            steps {
+                container('aws-kubectl') {
+                    script {
+                        echo "🚀 EKS에 배포..."
+
+                        // kubectl 설치
+                        sh """
+                            curl -LO "https://dl.k8s.io/release/\$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                            chmod +x kubectl
+                            mv kubectl /usr/local/bin/
+                        """
+
+                        // kubeconfig 설정
+                        sh "aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER}"
+
+                        // Deployment 존재 확인
+                        def exists = sh(
+                            script: "kubectl get deployment yoon-app -n default --ignore-not-found | grep yoon-app || true",
+                            returnStdout: true
+                        ).trim()
+
+                        if (exists) {
+                            // 이미지 업데이트
+                            sh """
+                                kubectl set image deployment/yoon-app \
+                                    yoon-app=${env.ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG} \
+                                    -n default
+                            """
+                            sh "kubectl rollout status deployment/yoon-app -n default --timeout=300s"
+                            echo "✅ 배포 완료"
+                        } else {
+                            echo "⚠️ Deployment가 없습니다. Step 08에서 먼저 생성하세요."
+                            echo "또는: kubectl create deployment yoon-app --image=${env.ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "🎉 파이프라인 성공! Image: ${ECR_REPOSITORY}:${IMAGE_TAG}"
+        }
+        failure {
+            echo "❌ 파이프라인 실패! Console Output을 확인하세요."
+        }
+    }
+}

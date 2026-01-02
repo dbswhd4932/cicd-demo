@@ -8,8 +8,21 @@ terraform {
     }
   }
 
-  # 상태 파일 로컬 저장 (실습용)
-  # 프로덕션에서는 S3 backend 사용 권장
+  # 프로덕션용 S3 Backend 설정
+  # 사용 전 S3 버킷과 DynamoDB 테이블을 먼저 생성해야 합니다
+  # aws s3 mb s3://your-company-terraform-state --region ap-northeast-2
+  # aws dynamodb create-table --table-name terraform-locks \
+  #   --attribute-definitions AttributeName=LockID,AttributeType=S \
+  #   --key-schema AttributeName=LockID,KeyType=HASH \
+  #   --billing-mode PAY_PER_REQUEST --region ap-northeast-2
+  #
+  # backend "s3" {
+  #   bucket         = "your-company-terraform-state"
+  #   key            = "cicd-demo/dev/terraform.tfstate"
+  #   region         = "ap-northeast-2"
+  #   dynamodb_table = "terraform-locks"
+  #   encrypt        = true
+  # }
 }
 
 provider "aws" {
